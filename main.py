@@ -7,16 +7,19 @@ print(cv2.__version__)
 yolo_model_path = 'yolo_models/yolov8n.pt'
 video_directories = ['30m_elevation_study_dkr', '100m_elevation_study_waterloo', 'drone_gimbal_gammarc', 'varying_elevation_study_dkr']
 ### Declare models here
-fine_tuned_model = YOLO('runs/detect/train3/weights/best.pt')
+fine_tuned_model_path = 'yolo_models/best.pt'
+fine_tuned_model = YOLO(fine_tuned_model_path)
 print(f'fine tuned model names: {fine_tuned_model.names}')
-model = YOLO(yolo_model_path)
+
+# yolo_model_path = '/Users/ximenasalazar/Desktop/application_prog/vehicle_detection/Vehicle-Detection/runs/train/exp12/weights/best.pt'
+# model = YOLO(yolo_model_path)
 
 def getColours(cls_num):
     random.seed(cls_num)
     return tuple(random.randint(0, 255) for _ in range(3))
 
 frame_count = 0
-min_conf = 0.4
+min_conf = 0.7
 required_objects = ['Car']
 for dir in video_directories:
     for filename in os.listdir(dir):
@@ -37,7 +40,7 @@ for dir in video_directories:
             # results = model.predict(source=frame, conf=0.1, verbose=True)  # lower conf for debugging
             # res = results[0]
             # print('num detections:', len(res.boxes))
-            results = model.track(frame, stream=True)
+            results = fine_tuned_model.track(frame, stream=True)
             for result in results:
                 # print(f'result: {result}')
                 class_names = result.names
@@ -46,8 +49,8 @@ for dir in video_directories:
                     cls = int(box.cls[0])
                     class_name = class_names[cls]
                     # print(f' curr class_name: {class_name}')
-                    if class_name not in required_objects: # if we dont detect a car or other req objects
-                        continue
+                    # if class_name not in required_objects: # if we dont detect a car or other req objects
+                    #     continue
                     if box.conf[0] > min_conf:
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         conf = float(box.conf[0])
