@@ -1,0 +1,7 @@
+path: /Users/ximenasalazar/Desktop/application_prog/final_proj/MEFinalProj/data
+
+train: images/train
+val: images/val
+
+nc: 5   # num classes
+names: ["Car", "Motorcycle", "Truck", "Bus", "Bicycle"]
