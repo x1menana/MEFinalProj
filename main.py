@@ -58,17 +58,17 @@ for dir in video_directories:
         width = int(videoCap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(videoCap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # # Output VideoWriter setup
-        # os.makedirs(output_directory, exist_ok=True) 
+        # Output VideoWriter setup
+        os.makedirs(output_directory, exist_ok=True) 
         
-        # # Updated output filename prefix
-        # base_output_filename = f"bboxes_{dir}_{filename}"
-        # output_filename = os.path.join(output_directory, base_output_filename)
+        # Updated output filename prefix
+        base_output_filename = f"bboxes_{dir}_{filename}"
+        output_filename = os.path.join(output_directory, base_output_filename)
         
-        # fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Codec for MP4
-        # out = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Codec for MP4
+        out = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
 
-        # print(f"-> Saving output to: {output_filename}")
+        print(f"-> Saving output to: {output_filename}")
 
         frame_count = 0
         while True:
@@ -81,8 +81,8 @@ for dir in video_directories:
             total_cam_dx += cam_dx
             total_cam_dy += cam_dy
 
-            # VISUAL DEBUG: Display the accumulated camera shift
-            cv2.putText(frame, f"Cam Shift: {int(total_cam_dx)}, {int(total_cam_dy)}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # # VISUAL DEBUG: Display the accumulated camera shift
+            # cv2.putText(frame, f"Cam Shift: {int(total_cam_dx)}, {int(total_cam_dy)}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             frame_count += 1
             # Run YOLO tracking. persist=True maintains tracking IDs between frames.
@@ -129,7 +129,7 @@ for dir in video_directories:
                             # Add current center to history
                             track_history[track_id].append((real_x, real_y))
 
-                            # Keep only last 40 frames of history
+                            # Keep only last 15 frames of history
                             if len(track_history[track_id]) > 15:
                                 track_history[track_id].pop(0)
                             
@@ -166,21 +166,22 @@ for dir in video_directories:
                                     cv2.FONT_HERSHEY_SIMPLEX,
                                     0.6, colour, 2)
 
-            # # Write annotated frame to output video
-            # out.write(frame)
+            # Write annotated frame to output video
+            out.write(frame)
 
             # Optional: Live preview 
             cv2.imshow(f'Live Preview: {filename}', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 videoCap.release()
+                out.release()
                 cv2.destroyAllWindows()
                 print("Exiting loop via 'q' key press.")
                 exit()
 
         # Cleanup for the current video
         videoCap.release()
-        # out.release()
+        out.release()
         cv2.destroyAllWindows() 
-        # print(f'Finished processing {filename}. Output saved as: {output_filename}\n')
+        print(f'Finished processing {filename}. Output saved as: {output_filename}\n')
 
 print("All videos processed.")
