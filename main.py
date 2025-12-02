@@ -2,64 +2,142 @@ import cv2
 import os
 from ultralytics import YOLO
 import random
-print(cv2.__version__)
 
-yolo_model_path = 'yolo_models/yolov8n.pt'
-video_directories = ['30m_elevation_study_dkr', '100m_elevation_study_waterloo', 'drone_gimbal_gammarc', 'varying_elevation_study_dkr']
-### Declare models here
-fine_tuned_model = YOLO('runs/detect/train3/weights/best.pt')
-print(f'fine tuned model names: {fine_tuned_model.names}')
-model = YOLO(yolo_model_path)
+# --- CONFIGURATION FROM FIRST SCRIPT ---
+# Assuming the file structure allows access to the fine-tuned model path
+fine_tuned_model_path = 'runs/detect/train9/weights/best.pt'
+video_directories = ['30m_elevation_study_dkr'] # Test
+# NOTE: Adjusted video_directories to match the first script's iteration to ensure the fine-tuned model is used on the same data.
+output_directory = 'test_output' # Directory where output videos will be saved
 
+# Detection settings
+# Adjusted to 'Vehicle' to match the intent of the first script using the fine-tuned model,
+# but the script will still process all detections if the filtering is commented out or required_objects is empty.
+required_objects = ['Vehicle'] 
+min_conf = 0.7 # Adjusted to match the min_conf from the first script for consistency
+
+# --- MODEL INITIALIZATION ---
+try:
+    # 1. LOAD THE FINE-TUNED MODEL
+    model = YOLO(fine_tuned_model_path)
+    model.verbose = False
+    # Get the class names from the fine-tuned model
+    CLASS_NAMES = model.names
+    print(f'Fine-tuned model loaded with names: {CLASS_NAMES}')
+except FileNotFoundError:
+    print(f"ERROR: Fine-tuned model not found at {fine_tuned_model_path}. Please check the path.")
+    exit()
+
+# Convert required objects list to lowercase for robust comparison against YOLO's output names
+required_objects_lower = [obj.lower() for obj in required_objects]
+
+# --- HELPER FUNCTION FROM FIRST SCRIPT ---
 def getColours(cls_num):
+    """Generates a pseudo-random color based on the class number (used for consistent box/text coloring)."""
     random.seed(cls_num)
     return tuple(random.randint(0, 255) for _ in range(3))
 
-frame_count = 0
-min_conf = 0.4
-required_objects = ['Car']
+# --- MAIN PROCESSING LOOP ---
+
+# 1. Iterate over all defined video directories
 for dir in video_directories:
     for filename in os.listdir(dir):
-        video_path = os.path.join(dir, filename)
-        print(f'extracting frames from current video: {video_path}')
+        # FIX: Check the lowercase version of the filename for case-insensitive extension matching.
+        if not filename.lower().endswith(('.mp4', '.avi', '.mov')):
+              # Skip non-video files
+              continue
 
-        # get vid capture
+        video_path = os.path.join(dir, filename)
+        print(f'Processing: {video_path}')
+
         videoCap = cv2.VideoCapture(video_path)
         if not videoCap.isOpened():
-            print(f'file_path not valid: {video_path}')
-            break
-        # get frame:
+            print(f'Invalid file or cannot open video: {video_path}')
+            continue # Move to the next file
+
+        # Get video properties for the output file
+        fps = int(videoCap.get(cv2.CAP_PROP_FPS))
+        width = int(videoCap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(videoCap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Output VideoWriter setup
+        os.makedirs(output_directory, exist_ok=True) 
+        
+        # Updated output filename prefix
+        base_output_filename = f"bboxes_{dir}_{filename}"
+        output_filename = os.path.join(output_directory, base_output_filename)
+        
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Codec for MP4
+        out = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
+
+        print(f"-> Saving output to: {output_filename}")
+
+        frame_count = 0
         while True:
             ret, frame = videoCap.read()
             if not ret:
-                break
-            ### TODO HERE: feed in frame to model ###
-            # results = model.predict(source=frame, conf=0.1, verbose=True)  # lower conf for debugging
-            # res = results[0]
-            # print('num detections:', len(res.boxes))
-            results = model.track(frame, stream=True)
-            for result in results:
-                # print(f'result: {result}')
-                class_names = result.names
-                # print(f'class_names: {class_names}')
-                for box in result.boxes:
-                    cls = int(box.cls[0])
-                    class_name = class_names[cls]
-                    # print(f' curr class_name: {class_name}')
-                    if class_name not in required_objects: # if we dont detect a car or other req objects
+                break # End of video stream
+
+            frame_count += 1
+            # Run YOLO tracking. persist=True maintains tracking IDs between frames.
+            # NOTE: We use the 'model' which is the fine-tuned model here.
+            results = model.track(frame, persist=True, verbose=False)
+
+            # Process detection results
+            if results and results[0].boxes:
+                # Iterate through all detected bounding boxes in the current frame
+                for box in results[0].boxes:
+                    cls = int(box.cls.item())
+                    conf = float(box.conf.item())
+                    # 2. Use the CLASS_NAMES from the fine-tuned model
+                    class_name_raw = CLASS_NAMES[cls]
+                    class_name_lower = class_name_raw.lower() 
+
+                    # 1. FILTERING: Check if the detected object is in the required list
+                    if required_objects and class_name_lower not in required_objects_lower:
                         continue
-                    if box.conf[0] > min_conf:
+
+                    # 2. FILTERING: Check if the confidence meets the minimum threshold
+                    if conf >= min_conf:
+                        # Get bounding box coordinates (x1, y1, x2, y2)
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        conf = float(box.conf[0])
-                        colour = getColours(cls)
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
-                        cv2.putText(frame, f"{class_name} {conf:.2f}",
-                                    (x1, max(y1 - 10, 20)), cv2.FONT_HERSHEY_SIMPLEX,
-                                    0.6, colour, 2)
                         
-            cv2.imshow(f'video: {filename}', frame)
+                        # Check for tracking ID (if available, used for consistent tracking visualization)
+                        track_id = int(box.id.item()) if box.id is not None else -1
+
+                        # Get the class-specific color
+                        colour = getColours(cls)
+
+                        # --- DRAWING ---
+                        # Use the raw class name for display (e.g., 'Vehicle' instead of 'vehicle')
+                        label = f"{class_name_raw} {conf:.2f}"
+                        if track_id != -1:
+                            label += f" | ID {track_id}"
+
+                        # Draw the bounding box (using the class-specific color)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+
+                        # Draw the label text (using the class-specific color)
+                        cv2.putText(frame, label,
+                                    (x1, max(y1 - 10, 20)), # Position the text slightly above the box
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6, colour, 2)
+
+            # Write annotated frame to output video
+            out.write(frame)
+
+            # Optional: Live preview 
+            cv2.imshow(f'Live Preview: {filename}', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("Exiting loop via 'q' key press.")
                 break
 
-videoCap.release()
-cv2.destroyAllWindows()
+        # Cleanup for the current video
+        videoCap.release()
+        out.release()
+        # NOTE: Only destroyAllWindows if a 'q' press didn't already close them all (outside the loop).
+        # We call it once per video, which is fine.
+        cv2.destroyAllWindows() 
+        print(f'Finished processing {filename}. Output saved as: {output_filename}')
+
+print("--- All videos processed. ---")
