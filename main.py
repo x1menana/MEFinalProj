@@ -3,32 +3,25 @@ import os
 from ultralytics import YOLO
 import random
 
-# --- CONFIGURATION FROM FIRST SCRIPT ---
-# Assuming the file structure allows access to the fine-tuned model path
 fine_tuned_model_path = 'runs/detect/train9/weights/best.pt'
-video_directories = ['30m_elevation_study_dkr'] # Test
-# NOTE: Adjusted video_directories to match the first script's iteration to ensure the fine-tuned model is used on the same data.
-output_directory = 'test_output' # Directory where output videos will be saved
+# video_directories = ['30m_elevation_study_dkr', '100m_elevation_study_wateloo']
+video_directories = ['30m_elevation_study_dkr'] # Test run
+output_directory = 'test_output' # Where annotated videos are saved
 
 # Detection settings
-# Adjusted to 'Vehicle' to match the intent of the first script using the fine-tuned model,
-# but the script will still process all detections if the filtering is commented out or required_objects is empty.
 required_objects = ['Vehicle'] 
-min_conf = 0.7 # Adjusted to match the min_conf from the first script for consistency
+min_conf = 0.7 # Adjustable
 
-# --- MODEL INITIALIZATION ---
+# Initiate model
 try:
-    # 1. LOAD THE FINE-TUNED MODEL
-    model = YOLO(fine_tuned_model_path)
+    model = YOLO(fine_tuned_model_path) # Load model
     model.verbose = False
-    # Get the class names from the fine-tuned model
     CLASS_NAMES = model.names
     print(f'Fine-tuned model loaded with names: {CLASS_NAMES}')
 except FileNotFoundError:
     print(f"ERROR: Fine-tuned model not found at {fine_tuned_model_path}. Please check the path.")
     exit()
 
-# Convert required objects list to lowercase for robust comparison against YOLO's output names
 required_objects_lower = [obj.lower() for obj in required_objects]
 
 # --- HELPER FUNCTION FROM FIRST SCRIPT ---
@@ -37,14 +30,11 @@ def getColours(cls_num):
     random.seed(cls_num)
     return tuple(random.randint(0, 255) for _ in range(3))
 
-# --- MAIN PROCESSING LOOP ---
-
-# 1. Iterate over all defined video directories
+## Main function
+# 1. Iterate over video directories (ex. 30m, 100m, etc)
 for dir in video_directories:
     for filename in os.listdir(dir):
-        # FIX: Check the lowercase version of the filename for case-insensitive extension matching.
         if not filename.lower().endswith(('.mp4', '.avi', '.mov')):
-              # Skip non-video files
               continue
 
         video_path = os.path.join(dir, filename)
@@ -53,7 +43,7 @@ for dir in video_directories:
         videoCap = cv2.VideoCapture(video_path)
         if not videoCap.isOpened():
             print(f'Invalid file or cannot open video: {video_path}')
-            continue # Move to the next file
+            continue
 
         # Get video properties for the output file
         fps = int(videoCap.get(cv2.CAP_PROP_FPS))
@@ -135,9 +125,7 @@ for dir in video_directories:
         # Cleanup for the current video
         videoCap.release()
         out.release()
-        # NOTE: Only destroyAllWindows if a 'q' press didn't already close them all (outside the loop).
-        # We call it once per video, which is fine.
         cv2.destroyAllWindows() 
-        print(f'Finished processing {filename}. Output saved as: {output_filename}')
+        print(f'Finished processing {filename}. Output saved as: {output_filename}\n')
 
-print("--- All videos processed. ---")
+print("All videos processed.")

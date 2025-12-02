@@ -1,7 +1,8 @@
 path: /Users/ximenasalazar/Desktop/application_prog/final_proj/MEFinalProj/data
 
-train: images/train
-val: images/val
+train: train/images
+val: valid/images
+test: test/images
 
-nc: 5   # num classes
-names: ["Car", "Motorcycle", "Truck", "Bus", "Bicycle"]
+nc: 1
+names: ['vehicle']
