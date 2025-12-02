@@ -1,22 +1,24 @@
 import cv2
 import os
+import csv
 from ultralytics import YOLO
 import random
 import math
 from motion_estimator import MotionEstimator
+from collections import defaultdict
 
+# Select CV model
 fine_tuned_model_path = 'runs/detect/train9/weights/best.pt'
-# video_directories = ['30m_elevation_study_dkr', '100m_elevation_study_wateloo']
-video_directories = ['30m_elevation_study_dkr'] # Test run
-output_directory = 'test_output' # Where annotated videos are saved
+video_directories = ['30m_elevation_study_dkr', '100m_elevation_study_waterloo']
+# video_directories = ['100m_elevation_study_waterloo'] # Test run
+output_directory = 'test_output'
 
-# Detection settings
 required_objects = ['Vehicle'] 
-min_conf = 0.7 # Adjustable
+min_conf = 0.7 # Default minimum confidence
 
 # Initiate model
 try:
-    model = YOLO(fine_tuned_model_path) # Load model
+    model = YOLO(fine_tuned_model_path)
     model.verbose = False
     CLASS_NAMES = model.names
     print(f'Fine-tuned model loaded with names: {CLASS_NAMES}')
@@ -24,25 +26,93 @@ except FileNotFoundError:
     print(f"ERROR: Fine-tuned model not found at {fine_tuned_model_path}. Please check the path.")
     exit()
 
-required_objects_lower = [obj.lower() for obj in required_objects]
+required_objects_lower = [obj.lower() for obj in required_objects] # ex. to read both ".mp4" and ".MP4" files
 
-# --- HELPER FUNCTION FROM FIRST SCRIPT ---
 def getColours(cls_num):
-    """Generates a pseudo-random color based on the class number (used for consistent box/text coloring)."""
     random.seed(cls_num)
     return tuple(random.randint(0, 255) for _ in range(3))
 
-## Main function
-# 1. Iterate over video directories (ex. 30m, 100m, etc)
+# Retrieve timestamps for .csv output
+def get_time_ranges(frames, fps):
+    if not frames:
+        return "N/A"
+    
+    frames.sort()
+    
+    ranges = []
+    current_start = frames[0]
+    current_end = frames[0]
+    
+    gap_threshold = fps + 1 
+    
+    for i in range(1, len(frames)):
+        if frames[i] - frames[i-1] > gap_threshold:
+            ranges.append((current_start, current_end))
+            current_start = frames[i]
+        current_end = frames[i]
+        
+    ranges.append((current_start, current_end)) # Add the last range
+
+    # Format ranges into string
+    time_ranges_str = []
+    for start_frame, end_frame in ranges:
+        start_time = start_frame / fps
+        end_time = end_frame / fps
+        time_ranges_str.append(f"{start_time:.2f}s - {end_time:.2f}s")
+        
+    return " | ".join(time_ranges_str)
+
+# Write .csv results file
+def write_csv_report(id_data, fps, output_filepath):
+    report_data = []
+    
+    for track_id, data in id_data.items():
+        if not data['confidences'] or not data['frames']:
+            continue
+            
+        # Calculates average confidence
+        avg_conf = sum(data['confidences']) / len(data['confidences'])
+        
+        # Collects timestamps and timestamp ranges
+        frame_ranges_str = get_time_ranges(data['frames'], fps)
+        
+        report_data.append({
+            'ID': track_id,
+            'Class': data['class_name'],
+            'Average_Confidence': f"{avg_conf:.4f}",
+            'Timestamp_Ranges': frame_ranges_str,
+            'Total_Frames_Tracked': len(data['frames'])
+        })
+
+    # Sort by detection ID
+    report_data.sort(key=lambda x: x['ID'])
+    
+    csv_fields = ['ID', 'Class', 'Average_Confidence', 'Total_Frames_Tracked', 'Timestamp_Ranges']
+    
+    try:
+        with open(output_filepath, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+            writer.writeheader()
+            writer.writerows(report_data)
+        print(f".csv report saved to: {output_filepath}")
+    except Exception as e:
+        print(f"ERROR writing .csv file: {e}")
+
+# Main annotation function
 for dir in video_directories:
+    min_conf = 0.4 if dir == '100m_elevation_study_waterloo' else 0.7
+    
     for filename in os.listdir(dir):
         if not filename.lower().endswith(('.mp4', '.avi', '.mov')):
-              continue
+            continue
 
         video_path = os.path.join(dir, filename)
         print(f'Processing: {video_path}')
 
-        # Initialize tracking history dictionary
+        # Data entries for .csv file
+        id_data = defaultdict(lambda: {'class_name': '', 'confidences': [], 'frames': []})
+
+        # Initialize motion estimator
         track_history = {}
         motion_estimator = MotionEstimator()
         total_cam_dx = 0
@@ -57,83 +127,73 @@ for dir in video_directories:
         fps = int(videoCap.get(cv2.CAP_PROP_FPS))
         width = int(videoCap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(videoCap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        # Output VideoWriter setup
+        
         os.makedirs(output_directory, exist_ok=True) 
         
-        # Updated output filename prefix
-        base_output_filename = f"bboxes_{dir}_{filename}"
-        output_filename = os.path.join(output_directory, base_output_filename)
+        # Export paths
+        base_name_no_ext = os.path.splitext(filename)[0]
+        output_video_filename = os.path.join(output_directory, f"bboxes_{dir}_{base_name_no_ext}.mp4")
+        output_csv_filename = os.path.join(output_directory, f"summary_{dir}_{base_name_no_ext}.csv")
         
         fourcc = cv2.VideoWriter_fourcc(*'mp4v') # Codec for MP4
-        out = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(output_video_filename, fourcc, fps, (width, height))
 
-        print(f"-> Saving output to: {output_filename}")
+        print(f"Saving video output to: {output_video_filename}")
 
         frame_count = 0
         while True:
             ret, frame = videoCap.read()
             if not ret:
-                break # End of video stream
+                break
 
-            # Estimate camera motion
+            frame_count += 1
+            
             cam_dx, cam_dy = motion_estimator.process_frame(frame)
             total_cam_dx += cam_dx
             total_cam_dy += cam_dy
 
-            # # VISUAL DEBUG: Display the accumulated camera shift
-            # cv2.putText(frame, f"Cam Shift: {int(total_cam_dx)}, {int(total_cam_dy)}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-            frame_count += 1
-            # Run YOLO tracking. persist=True maintains tracking IDs between frames.
-            # NOTE: We use the 'model' which is the fine-tuned model here.
             results = model.track(frame, persist=True, verbose=False)
 
             # Process detection results
             if results and results[0].boxes:
-                # Iterate through all detected bounding boxes in the current frame
                 for box in results[0].boxes:
                     cls = int(box.cls.item())
                     conf = float(box.conf.item())
-                    # 2. Use the CLASS_NAMES from the fine-tuned model
+                    track_id = int(box.id.item()) if box.id is not None else -1
+                    
                     class_name_raw = CLASS_NAMES[cls]
                     class_name_lower = class_name_raw.lower() 
 
-                    # 1. FILTERING: Check if the detected object is in the required list
                     if required_objects and class_name_lower not in required_objects_lower:
                         continue
 
-                    # 2. FILTERING: Check if the confidence meets the minimum threshold
                     if conf >= min_conf:
-                        # Get bounding box coordinates (x1, y1, x2, y2)
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        # Initialize annotation
+                        if track_id != -1:
+                            data = id_data[track_id]
+                            data['class_name'] = class_name_raw
+                            data['confidences'].append(conf)
+                            data['frames'].append(frame_count)
                         
-                        # Calculate Center
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
                         center_x = (x1 + x2) // 2
                         center_y = (y1 + y2) // 2
                         current_center = (center_x, center_y)
 
-                        # Check for tracking ID (if available, used for consistent tracking visualization)
-                        track_id = int(box.id.item()) if box.id is not None else -1
-
-                        # Get the class-specific color
                         colour = getColours(cls)
 
-                        # Arrow Drawing Logic
-                        if track_id!= -1:
+                        if track_id != -1:
                             if track_id not in track_history:
                                 track_history[track_id] = []
-                            # Subtract camera motion
+                                
+                            # Handles camera motion
                             real_x = current_center[0] - total_cam_dx
                             real_y = current_center[1] - total_cam_dy
-                            # Add current center to history
                             track_history[track_id].append((real_x, real_y))
 
-                            # Keep only last 15 frames of history
                             if len(track_history[track_id]) > 15:
                                 track_history[track_id].pop(0)
                             
-                            # Compare current position with oldest position in history
                             if len(track_history[track_id]) > 10:
                                 prev_real_x, prev_real_y = track_history[track_id][0]
 
@@ -142,46 +202,39 @@ for dir in video_directories:
                                 magnitude = math.sqrt(dx**2 + dy**2)
 
                                 box_size = max(x2 - x1, y2 - y1)
-
                                 dynamic_threshold = box_size * 0.2
 
-                                # Only draw arrow if movement is significant
+                                # Arrow is drawn only for significant movement
                                 if magnitude > dynamic_threshold:
                                     end_x = int(current_center[0] + dx)
                                     end_y = int(current_center[1] + dy)
-                                    cv2.arrowedLine(frame, current_center, (end_x, end_y), (0, 0, 255), 4, tipLength=0.4)                            
+                                    cv2.arrowedLine(frame, current_center, (end_x, end_y), (0, 0, 255), 4, tipLength=0.4)
 
-                        # --- DRAWING ---
-                        # Use the raw class name for display (e.g., 'Vehicle' instead of 'vehicle')
+                        # Drawing
                         label = f"{class_name_raw} {conf:.2f}"
                         if track_id != -1:
                             label += f" | ID {track_id}"
 
-                        # Draw the bounding box (using the class-specific color)
+                        # Annotate bounding box
                         cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
 
-                        # Draw the label text (using the class-specific color)
                         cv2.putText(frame, label,
-                                    (x1, max(y1 - 10, 20)), # Position the text slightly above the box
+                                    (x1, max(y1 - 10, 20)), 
                                     cv2.FONT_HERSHEY_SIMPLEX,
                                     0.6, colour, 2)
 
-            # Write annotated frame to output video
             out.write(frame)
 
-            # Optional: Live preview 
+            # OPTIONAL: Live preview
             cv2.imshow(f'Live Preview: {filename}', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                videoCap.release()
-                out.release()
-                cv2.destroyAllWindows()
-                print("Exiting loop via 'q' key press.")
-                exit()
+                break
 
-        # Cleanup for the current video
         videoCap.release()
         out.release()
         cv2.destroyAllWindows() 
-        print(f'Finished processing {filename}. Output saved as: {output_filename}\n')
+        print(f'Finished processing {filename}')
+
+        write_csv_report(id_data, fps, output_csv_filename)
 
 print("All videos processed.")
