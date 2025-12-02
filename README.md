@@ -67,3 +67,8 @@ $$ \vec{V}_{real} = \vec{V}_{observed} - \vec{V}_{camera} $$
 ### Dynamic Thresholding
 
 To filter out detection jitter (noise) without suppressing slow-moving vehicles, the system calculates a dynamic movement threshold for every object. A vehicle is only marked as "moving" if its displacement exceeds **20% of its own bounding box size**. This scales automatically across different drone altitudes and vehicle types.
+
+### Results
+
+The annotated footage files are too large for Github, so we have uploaded them to the google drive below:
+https://drive.google.com/drive/folders/1WZUnfnZWfeGee9AYZq8I5pYeUBvXgAde?usp=drive_link
